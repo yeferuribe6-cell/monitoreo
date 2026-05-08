@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SCADA - Tiempo real</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+:root{
+  --bg:#0b1220;
+  --panel:#111b31;
+  --line:rgba(255,255,255,.10);
+  --text:#e8eefc;
+  --muted:rgba(232,238,252,.70);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:system-ui,Segoe UI,Roboto,Arial;
+  background:var(--bg);
+  color:var(--text)
+}
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:14px 16px;
+  border-bottom:1px solid var(--line);
+  position:sticky;
+  top:0;
+  background:rgba(11,18,32,.92);
+  backdrop-filter:blur(10px)
+}
+.title{font-weight:900;letter-spacing:.6px}
+.sub{font-size:12px;color:var(--muted)}
+.wrap{max-width:1400px;margin:0 auto;padding:16px}
+
+/* ✅ GRID CORREGIDO PARA PC */
+.grid{
+  display:grid;
+  gap:14px;
+  grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:18px;
+  padding:16px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25)
+}
+.label{font-size:12px;color:var(--muted)}
+.kpi{margin-top:6px;font-size:36px;font-weight:900}
+.meta{margin-top:6px;font-size:11px;color:rgba(232,238,252,.55)}
+.row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap
+}
+.lamp{
+  width:18px;height:18px;border-radius:50%;
+  background:#666;
+  border:1px solid rgba(255,255,255,.12)
+}
+
+/* ✅ GRÁFICA ANCHO COMPLETO */
+.chartCard{grid-column:1/-1}
+.chartWrap{height:320px;margin-top:10px}
+@media(max-width:600px){
+  .chartWrap{height:260px}
+}
+
+canvas{width:100%!important;height:100%!important}
+
+select,input{
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);
+  color:var(--text);
+  border-radius:10px;
+  padding:6px 10px;
+  outline:none
+}
+input{width:90px}
+
+pre{
+  white-space:pre-wrap;
+  max-height:220px;
+  overflow:auto;
+  background:rgba(255,255,255,.04);
+  padding:10px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.08)
+}
+</style>
+</head>
+
+<body>
+<header class="topbar">
+  <div>
+    <div class="title">SCADA</div>
+    <div class="sub" id="status">Desconectado</div>
+  </div>
+  <div class="sub" id="clock">--</div>
+</header>
+
+<main class="wrap">
+<section class="grid">
+
+  <div class="card">
+    <div class="label">Fase A</div>
+    <div class="kpi" id="fa">--</div>
+    <div class="meta">TAG: fa</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Fase B</div>
+    <div class="kpi" id="fb">--</div>
+    <div class="meta">TAG: fb</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Fase C</div>
+    <div class="kpi" id="fc">--</div>
+    <div class="meta">TAG: fc</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Fase D</div>
+    <div class="kpi" id="fd">--</div>
+    <div class="meta">TAG: fd</div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <div class="label">Estado conexión</div>
+        <div class="kpi" style="font-size:18px" id="connTxt">DESCONECTADO</div>
+        <div class="meta" id="err">—</div>
+      </div>
+      <div class="lamp" id="connLamp"></div>
+    </div>
+  </div>
+
+  <!-- GRÁFICA -->
+  <div class="card chartCard">
+    <div class="row">
+      <div>
+        <div class="label">Gráfica en tiempo real</div>
+        <div class="meta">Últimos <span id="nLabel">60</span> puntos</div>
+      </div>
+      <div class="row">
+        <span class="meta">Puntos</span>
+        <input id="nPoints" type="number" value="60" min="10" max="300">
+      </div>
+    </div>
+
+    <div class="chartWrap">
+      <canvas id="chart"></canvas>
+    </div>
+
+    <div class="meta">Debug</div>
+    <pre id="raw">--</pre>
+  </div>
+
+</section>
+</main>
+
+<script>
+const EXEC="https://script.google.com/macros/s/AKfycbwPzv0gLNqPTLFrIOBF7Ptf6pOPwy2xjQ0SPUUAS9JeCUwA7xGzfgM0yu62WnBABGo/exec";
+const POLL=2000;
+
+function $(id){return document.getElementById(id)}
+function setConn(ok,msg){
+  $("connTxt").textContent=ok?"CONECTADO":"DESCONECTADO";
+  $("connLamp").style.background=ok?"#2ee59d":"#666";
+  $("status").textContent=ok?"Conectado":"Desconectado";
+  $("err").textContent=msg||"—";
+  $("clock").textContent=new Date().toLocaleString();
+}
+
+function jsonp(url){
+  return new Promise((res,rej)=>{
+    const cb="cb_"+Math.random().toString(36).slice(2);
+    window[cb]=d=>{res(d);delete window[cb];s.remove()};
+    const s=document.createElement("script");
+    s.src=url+(url.includes("?")?"&":"?")+"callback="+cb+"&_="+Date.now();
+    s.onerror=()=>rej("JSONP error");
+    document.body.appendChild(s);
+  });
+}
+
+const chart=new Chart($("chart"),{
+  type:"line",
+  data:{
+    labels:[],
+    datasets:[
+      {label:"FA",data:[],tension:.3,pointRadius:0},
+      {label:"FB",data:[],tension:.3,pointRadius:0},
+      {label:"FC",data:[],tension:.3,pointRadius:0},
+      {label:"FD",data:[],tension:.3,pointRadius:0}
+    ]
+  },
+  options:{
+    responsive:true,
+    maintainAspectRatio:false,
+    animation:false,
+    scales:{x:{ticks:{maxTicksLimit:8}}}
+  }
+});
+
+async function loop(){
+  try{
+    const latest=await jsonp(EXEC+"?action=latest");
+    ["fa","fb","fc","fd"].forEach(k=>$(k).textContent=latest.latest?.[k]??"--");
+
+    const n=$("nPoints").value;
+    $("nLabel").textContent=n;
+    const hist=await jsonp(EXEC+"?action=last&n="+n);
+
+    chart.data.labels=hist.rows.map(r=>new Date(r.fecha).toLocaleTimeString());
+    chart.data.datasets[0].data=hist.rows.map(r=>r.fa);
+    chart.data.datasets[1].data=hist.rows.map(r=>r.fb);
+    chart.data.datasets[2].data=hist.rows.map(r=>r.fc);
+    chart.data.datasets[3].data=hist.rows.map(r=>r.fd);
+    chart.update();
+
+    $("raw").textContent=JSON.stringify(hist,null,2);
+    setConn(true,"OK");
+  }catch(e){
+    setConn(false,e);
+  }
+  setTimeout(loop,POLL);
+}
+loop();
+</script>
+</body>
+</html>
